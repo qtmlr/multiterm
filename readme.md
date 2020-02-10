@@ -1,20 +1,24 @@
 # Multi Term
-A terminal program that handles several serial lines at once (in parallel)
+A terminal program that handles several serial lines (in parallel)
 
 ## Features
-
+- Handles several serial lines
+- Extensible by a node system
 
 ## Open
-- log to file
-- own protocols
-- filter system
 - python config file
-- configured by a python file
 - input char handling / key handling
+- keyboard sequence handling
+- node: line buffering
+- node: xfer protocol
+- do not handle all ch the same in a node
 
 ## Done:
-- colored output
+- node: colored output
 - importing a python settings module
+- filter system
+- node: log to file
+- implement as package
 
 ## Layout
 - menu bar
@@ -24,7 +28,7 @@ A terminal program that handles several serial lines at once (in parallel)
 - node display
 
 ## Filter System
-- MTNode with children and proc()
+- MTNode with children and proc() and recv(ba)
 - forward byte array to MTNode()
 - derive from MtNode in imported settings module
 - list of root leafs in app, settings file can add more

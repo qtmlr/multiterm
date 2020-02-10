@@ -43,6 +43,16 @@ class MTNode(object):
     def proc(self):
         pass
 
+class MTNodeLogfile(MTNode):
+    def __init__(self, app, fname):
+        MTNode.__init__(self)
+        self.app = app
+        self.fname = fname
+        self.fd = open(self.fname, "wb")
+
+    def recv(self, ba):
+        self.fd.write(ba)
+
 class MTNodeKeyboard(MTNode):
     def __init__(self, app):
         MTNode.__init__(self)

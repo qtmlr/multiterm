@@ -21,9 +21,12 @@ ss1 = mt.MTNodeSerial(app, s1)
 t0 = mt.MTNodeText(app, wx.RED)
 t1 = mt.MTNodeText(app, wx.BLUE)
 
+log = mt.MTNodeLogfile(app, "log.txt")
+
 key.append_child(ss0)
 ss0.append_child(t0)
 ss1.append_child(t1)
+ss1.append_child(log)
 
 app.register_proc(ss0)
 app.register_proc(ss1)
