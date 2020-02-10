@@ -4,11 +4,29 @@
 """
 
 import wx
+import wx.lib.newevent
 import os
 import sys
 import zlib
 import pickle
 import serial
+import threading
+
+
+SerialEvent, EVT_SERIAL_EVENT = wx.lib.newevent.NewEvent()
+
+
+class ProcHandler(threading.Thread):
+    def __init__(self, app):
+        threading.Thread.__init__(self)
+        print("Thread init")
+        self.app = app
+        self.stop = False
+
+    def run(self):
+        while not self.stop:
+            for ob in self.app.proc:
+                ob.proc()
 
 
 class MTNode(object):
@@ -21,12 +39,9 @@ class MTNode(object):
 
     def recv(self, ba):
         pass
-#        self.ba.extend(ba)
 
     def proc(self):
         pass
-#        for i, ch in enumerate(self.ch):
-#            ch.proc()
 
 class MTNodeKeyboard(MTNode):
     def __init__(self, app):
@@ -40,20 +55,10 @@ class MTNodeKeyboard(MTNode):
             for ch in self.ch:
                 ch.recv(ba)
 
-#    def proc(self):
-#        ba = bytearray()
-#        while True:
-#            k = app.key()
-#            if k == 0:
-#                break
-#            ba.append(k)
-#        if len(ba) != 0:
-#            for ch in self.ch:
-#                ch.recv(ba)
-
 class MTNodeSerial(MTNode):
-    def __init__(self, ser):
+    def __init__(self, app, ser):
         MTNode.__init__(self)
+        self.app = app
         self.ser = ser
 
     def recv(self, ba):
@@ -64,7 +69,9 @@ class MTNodeSerial(MTNode):
         ba = self.ser.read()
         if len(ba) != 0:
             for ch in self.ch:
-                ch.recv(ba)
+                evt = SerialEvent(ba = ba, ch = ch)
+                wx.PostEvent(self.app, evt)
+#                ch.recv(ba)
 
 class MTNodeText(MTNode):
     def __init__(self, app, col):
@@ -135,7 +142,6 @@ class MTTextCtrl(wx.TextCtrl):
     def __init__(self, par):
         wx.TextCtrl.__init__(self, par, style = wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2)
         self.par = par
-        print("textctrl:", self.par)
         self.tcol = None
         self.SetDefaultStyle(wx.TextAttr(colText = wx.BLACK, colBack = wx.NullColour,
             font = wx.Font(12, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL, False)))
@@ -176,13 +182,26 @@ class MTFrame(wx.Frame):
     def __init__(self, par):
         wx.Frame.__init__(self, None)
         self.par = par
-        print("frame:", self.par)
         self.tc = MTTextCtrl(self)
         self.vbox = wx.BoxSizer(wx.VERTICAL)
         self.vbox.Add(self.tc, proportion = 1, flag = wx.EXPAND | wx.ALL, border = 0)
 
         self.SetSizer(self.vbox)
         self.Show(True)
+
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+
+        print("starting threads")
+        self.par.thr.start()
+
+    def OnClose(self, evt):
+        self.stop_thread()
+        self.Destroy()
+
+    def stop_thread(self):
+        print("stopping thread")
+        self.par.thr.stop = True
+        self.par.thr.join()
 
     def append_text(self, tcol, txt):
         self.tc.append_text(tcol, txt)
@@ -191,19 +210,26 @@ class MTApp(wx.App):
     def __init__(self, *args, **kwds):
         wx.App.__init__(self, *args, **kwds)
 #        self.s = s
+        self.proc = []
+        self.thr = ProcHandler(self)
         self.kl = None
         self.f = MTFrame(self)
         self.f.Show()
 #        self.st = load_mod("settings.py")
 #        print("fontsize", self.st.fontsize)
 #        self.st.init(self)
-#        self.Bind(wx.EVT_IDLE, self.OnIdle)
+
+        self.Bind(EVT_SERIAL_EVENT, self.OnSerial)
+
+    def OnSerial(self, evt):
+        print("serial event")
+        evt.ch.recv(evt.ba)
 
     def register_keylistener(self, kl):
         self.kl = kl
 
-#    def OnIdle(self, evt):
-#        print("Idle")
+    def register_proc(self, ob):
+        self.proc.append(ob)
 
 if __name__ == '__main__':
     s = Settings()
