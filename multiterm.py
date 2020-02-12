@@ -19,7 +19,6 @@ SerialEvent, EVT_SERIAL_EVENT = wx.lib.newevent.NewEvent()
 class ProcHandler(threading.Thread):
     def __init__(self, app):
         threading.Thread.__init__(self)
-        print("Thread init")
         self.app = app
         self.stop = False
 
@@ -28,13 +27,39 @@ class ProcHandler(threading.Thread):
             for ob in self.app.proc:
                 ob.proc()
 
+class ByteSeq(object):
+    def __init__(self, cll, bstr, dta = None, display = False):
+        self.call = cll # call target
+        self.dta = dta # parameter to call
+        self.display = display # if characters shall be forwarded to children if this seq is still possible
+        self.bstr = bstr # the sequence to match
+        self.reset()
 
-class MTNode(object):
+    def reset(self):
+        self.ix = 0
+        self.match = False
+
+    def received(self, b):
+        if self.ix < len(self.bstr):
+            if b == self.bstr[self.ix]:
+                self.ix += 1
+                if self.ix == len(self.bstr):
+                    self.match = True
+            else:
+                self.reset()
+        else:
+            self.reset()
+
+    def matched(self):
+        return self.match
+
+
+class Node(object):
     def __init__(self):
         self.ch = []
         self.ba = bytearray()
 
-    def append_child(self, ch):
+    def append_receiver(self, ch):
         self.ch.append(ch)
 
     def recv(self, ba):
@@ -43,9 +68,58 @@ class MTNode(object):
     def proc(self):
         pass
 
-class MTNodeLogfile(MTNode):
+def rindex(lst, val, start = None):
+    if start is None:
+        start = len(lst) - 1
+    for i in range(start, -1, -1):
+        if lst[i] == val:
+            return i
+
+class NodeLinebuffer(Node):
+    def __init__(self):
+        Node.__init__(self)
+        self.ba = bytearray()
+
+    def recv(self, ba):
+        self.ba.extend(ba)
+        ix = rindex(self.ba, 13)
+        if not ix is None:
+            f = self.ba[:ix + 1]
+            self.ba = self.ba[ix+1:]
+            for ch in self.ch:
+                ch.recv(f)
+
+
+class NodeSeqCheck(Node):
+    def __init__(self, app, lobs):
+        Node.__init__(self)
+        self.app = app
+        self.esc = 27
+        self.lobs = lobs # list of byte sequences
+
+    def recv(self, ba):
+        for b in ba:
+            print("Check", b)
+
+            display = True
+            for bs in self.lobs:
+                bs.received(b)
+                if bs.ix != 0 and bs.display == False:
+                    display = False
+                if bs.matched():
+                    bs.call(self.app, bs.dta)
+                    bs.reset() # reset all?
+
+            if display:
+                bba = bytearray()
+                bba.append(b)
+                for ch in self.ch:
+                    ch.recv(bba)
+
+
+class NodeLogfile(Node):
     def __init__(self, app, fname):
-        MTNode.__init__(self)
+        Node.__init__(self)
         self.app = app
         self.fname = fname
         self.fd = open(self.fname, "wb")
@@ -53,21 +127,21 @@ class MTNodeLogfile(MTNode):
     def recv(self, ba):
         self.fd.write(ba)
 
-class MTNodeKeyboard(MTNode):
+class NodeKeyboard(Node):
     def __init__(self, app):
-        MTNode.__init__(self)
+        Node.__init__(self)
         self.app = app
         app.register_keylistener(self)
 
     def recv(self, ba):
         if len(ba) != 0:
-            print("kbd recv", ba)
+#            print("kbd recv", ba)
             for ch in self.ch:
                 ch.recv(ba)
 
-class MTNodeSerial(MTNode):
+class NodeSerial(Node):
     def __init__(self, app, ser):
-        MTNode.__init__(self)
+        Node.__init__(self)
         self.app = app
         self.ser = ser
 
@@ -83,9 +157,9 @@ class MTNodeSerial(MTNode):
                 wx.PostEvent(self.app, evt)
 #                ch.recv(ba)
 
-class MTNodeText(MTNode):
+class NodeText(Node):
     def __init__(self, app, col):
-        MTNode.__init__(self)
+        Node.__init__(self)
         self.app = app
         self.col = col
 
@@ -216,7 +290,7 @@ class MTFrame(wx.Frame):
     def append_text(self, tcol, txt):
         self.tc.append_text(tcol, txt)
 
-class MTApp(wx.App):
+class MultiTerm(wx.App):
     def __init__(self, *args, **kwds):
         wx.App.__init__(self, *args, **kwds)
 #        self.s = s
@@ -241,6 +315,9 @@ class MTApp(wx.App):
     def register_proc(self, ob):
         self.proc.append(ob)
 
+    def quit(self):
+        self.f.OnClose(None)
+
 if __name__ == '__main__':
     s = Settings()
     s.show()
@@ -248,6 +325,6 @@ if __name__ == '__main__':
     s.show()
     s.load()
     s.show()
-    app = MTApp(redirect = False, settings = s)
+    app = MultiTerm(redirect = False, settings = s)
     app.MainLoop()
 
