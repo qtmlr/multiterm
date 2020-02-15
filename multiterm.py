@@ -15,6 +15,52 @@ import threading
 
 SerialEvent, EVT_SERIAL_EVENT = wx.lib.newevent.NewEvent()
 
+ESCMARKER = 0
+FRAMESTART = 1
+ACK = 2
+NACK = 3
+ESC = 255
+
+htab = (0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
+
+def hdump(ba, bpl = 8):
+    ret = bytearray()
+    for ix, x in enumerate(ba):
+        if (ix % bpl) == 0 and ix != 0:
+            ret.append(13)
+        ret.append(32)
+        h = int(x / 16)
+        l = x & 15
+        ret.append(htab[h])
+        ret.append(htab[l])
+    ret.append(13)
+
+    return ret
+
+
+def rindex(lst, val, start = None):
+    if start is None:
+        start = len(lst) - 1
+    for i in range(start, -1, -1):
+        if lst[i] == val:
+            return i
+
+
+def lindex(lst, val, start = None):
+    if start is None:
+        start = 0
+    for i in range(start, len(lst), 1):
+        if lst[i] == val:
+            return i
+
+
+def list_add(l, v):
+    if v == ESC:
+        l.append(ESC)
+        l.append(ESCMARKER)
+    else:
+        l.append(v)
+
 
 class ProcHandler(threading.Thread):
     def __init__(self, app):
@@ -27,6 +73,7 @@ class ProcHandler(threading.Thread):
             for ob in self.app.proc:
                 ob.proc()
 
+
 class ByteSeq(object):
     def __init__(self, cll, bstr, dta = None, display = False):
         self.call = cll # call target
@@ -38,10 +85,15 @@ class ByteSeq(object):
     def reset(self):
         self.ix = 0
         self.match = False
+        self.got = bytearray()
 
     def received(self, b):
         if self.ix < len(self.bstr):
-            if b == self.bstr[self.ix]:
+            bc = self.bstr[self.ix]
+            wcard = bc == ord('_')
+            if b == bc or wcard:
+                if wcard:
+                    self.got.append(b)
                 self.ix += 1
                 if self.ix == len(self.bstr):
                     self.match = True
@@ -55,49 +107,209 @@ class ByteSeq(object):
 
 
 class Node(object):
-    def __init__(self):
+    def __init__(self, uid = ''):
         self.ch = []
+        self.uid = uid
         self.ba = bytearray()
 
     def append_receiver(self, ch):
         self.ch.append(ch)
 
-    def recv(self, ba):
+    def recv(self, ba, caller):
         pass
 
     def proc(self):
         pass
 
-def rindex(lst, val, start = None):
-    if start is None:
-        start = len(lst) - 1
-    for i in range(start, -1, -1):
-        if lst[i] == val:
-            return i
+
+class NodeSelect(Node):
+    def __init__(self, uid = ''):
+        Node.__init__(self, uid)
+        self.d = dict()
+        self.df = True
+
+    def default_enable(self, df):
+        self.df = df
+
+    def enable(self, k):
+        print("enable", k)
+        self.d[k] = True
+
+    def disable(self, k):
+        print("disable", k)
+        self.d[k] = False
+
+    def recv(self, ba, caller):
+        for ch in self.ch:
+            df = self.df
+            if caller in self.d:
+                df = self.d[caller]
+            if df:
+                ch.recv(ba, self.uid)
+
+
+class NodeHex(Node):
+    def __init__(self, uid = ''):
+        Node.__init__(self, uid)
+
+    def recv(self, ba, caller):
+        b = bytearray()
+        for x in ba:
+            b.append(32)
+            h = int(x / 16)
+            l = x & 15
+            b.append(htab[h])
+            b.append(htab[l])
+        for ch in self.ch:
+            ch.recv(b, self.uid)
+
+
+class NodeXferOut(Node):
+    def __init__(self, uid = ''):
+        Node.__init__(self, uid)
+
+    def recv(self, ba, caller):
+        b = bytearray()
+        l = len(ba)
+        assert l < 65535, "bytearray too long: %i" % (l)
+        lh = int(l / 256)
+        ll = l & 255
+        b.append(ESC)
+        b.append(FRAMESTART)
+        list_add(b, lh)
+        list_add(b, ll)
+        s = lh + ll
+        for x in ba:
+            list_add(b, x)
+            s += x
+        s &= 255
+        list_add(b, s)
+
+        for ch in self.ch:
+            ch.recv(b, self.uid)
+
+
+class NodeXferIn(Node):
+    def __init__(self, uid = ''):
+        Node.__init__(self, uid)
+        self.reset()
+        self.pch = []
+
+    def add_packet_receiver(self, ob):
+        self.pch.append(ob)
+
+    def no_packet(self):
+        self.p = bytearray()
+        self.st = 0
+        self.l = 0
+        self.s = 0
+        self.ix = 0
+        self.esc = False
+
+    def reset(self):
+        self.ba = bytearray()
+        self.no_packet()
+
+# st:
+# 0: no packet, just normal bytes
+# 1: FRAMESTART
+# 2: LEN_HI
+# 3: LEN_LO
+# 4: DATA
+# 5: CSUM
+    def rx(self, v):
+        print("rx", v, self.st)
+        if self.st == 0:
+            if v == ESC:
+                self.st = 1
+                self.esc = True
+            else:
+                self.ba.append(v)
+            return
+
+        if self.esc:
+            if v == ESCMARKER:
+                v = ESC
+            self.esc = False
+        else:
+            if v == ESC:
+                self.esc = True
+                return
+
+        if self.st == 1:
+            if v == FRAMESTART:
+                self.st = 2
+            else:
+                self.no_packet()    
+
+        elif self.st == 2:
+            self.s = v
+            self.l = 256 * v
+            self.st = 3
+
+        elif self.st == 3:
+            self.s += v
+            self.l += v
+            if self.l == 0:
+                self.st = 5
+            self.st = 4
+
+        elif self.st == 4:
+            self.s += v
+            self.p.append(v)
+            self.ix += 1
+            if self.ix >= self.l:
+                self.st = 5
+
+        elif self.st == 5:
+            if v == self.s:
+                if len(self.ba) != 0:
+                    for ch in self.ch:
+                        ch.recv(self.ba, self.uid)
+                    self.ba = bytearray()
+
+                for ch in self.pch:
+                    ch.recv(self.p, self.uid)
+                self.reset()
+            else:
+                self.no_packet()
+
+
+    def recv(self, ba, caller):
+        ln = len(ba)
+        if ln == 0:
+            return
+        for x in ba:
+            self.rx(x)
+        if len(self.ba) != 0:
+            for ch in self.ch:
+                ch.recv(self.ba, self.uid)
+            self.ba = bytearray()
+
 
 class NodeLinebuffer(Node):
-    def __init__(self):
-        Node.__init__(self)
+    def __init__(self, uid = ''):
+        Node.__init__(self, uid)
         self.ba = bytearray()
 
-    def recv(self, ba):
+    def recv(self, ba, caller):
         self.ba.extend(ba)
         ix = rindex(self.ba, 13)
         if not ix is None:
             f = self.ba[:ix + 1]
             self.ba = self.ba[ix+1:]
             for ch in self.ch:
-                ch.recv(f)
+                ch.recv(f, self.uid)
 
 
 class NodeSeqCheck(Node):
-    def __init__(self, app, lobs):
-        Node.__init__(self)
+    def __init__(self, app, lobs, uid = ''):
+        Node.__init__(self, uid)
         self.app = app
         self.esc = 27
         self.lobs = lobs # list of byte sequences
 
-    def recv(self, ba):
+    def recv(self, ba, caller):
         for b in ba:
             print("Check", b)
 
@@ -107,63 +319,64 @@ class NodeSeqCheck(Node):
                 if bs.ix != 0 and bs.display == False:
                     display = False
                 if bs.matched():
-                    bs.call(self.app, bs.dta)
+                    bs.call(self.app, bs.dta, bs.got)
                     bs.reset() # reset all?
 
             if display:
                 bba = bytearray()
                 bba.append(b)
                 for ch in self.ch:
-                    ch.recv(bba)
+                    ch.recv(bba, self.uid)
 
 
 class NodeLogfile(Node):
-    def __init__(self, app, fname):
-        Node.__init__(self)
+    def __init__(self, app, fname, uid = ''):
+        Node.__init__(self, uid)
         self.app = app
         self.fname = fname
         self.fd = open(self.fname, "wb")
 
-    def recv(self, ba):
+    def recv(self, ba, caller):
         self.fd.write(ba)
 
+
 class NodeKeyboard(Node):
-    def __init__(self, app):
-        Node.__init__(self)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, uid)
         self.app = app
         app.register_keylistener(self)
 
-    def recv(self, ba):
+    def recv(self, ba, caller = ''):
         if len(ba) != 0:
 #            print("kbd recv", ba)
             for ch in self.ch:
-                ch.recv(ba)
+                ch.recv(ba, self.uid)
+
 
 class NodeSerial(Node):
-    def __init__(self, app, ser):
-        Node.__init__(self)
+    def __init__(self, app, ser, uid = ''):
+        Node.__init__(self, uid)
         self.app = app
         self.ser = ser
 
-    def recv(self, ba):
-#        print("serial recv", ba)
+    def recv(self, ba, caller = ''):
         self.ser.write(ba)
 
     def proc(self):
         ba = self.ser.read()
         if len(ba) != 0:
             for ch in self.ch:
-                evt = SerialEvent(ba = ba, ch = ch)
+                evt = SerialEvent(ba = ba, ch = ch, uid = self.uid)
                 wx.PostEvent(self.app, evt)
-#                ch.recv(ba)
+
 
 class NodeText(Node):
-    def __init__(self, app, col):
-        Node.__init__(self)
+    def __init__(self, app, col, uid = ''):
+        Node.__init__(self, uid)
         self.app = app
         self.col = col
 
-    def recv(self, ba):
+    def recv(self, ba, caller):
         self.app.f.tc.append_text(self.col, ba)
 
 
@@ -185,8 +398,10 @@ def load_mod(path):
 def configdir():
     return os.path.expanduser("~")
 
+
 def configfile():
     return configdir() + "/.multiterm.dta"
+
 
 class Settings(dict):
     def __init__(self):
@@ -233,7 +448,7 @@ class MTTextCtrl(wx.TextCtrl):
         self.Bind(wx.EVT_CHAR_HOOK, self.OnChar)
         self.SetFocus()
 
-        self.append_text(wx.RED, b"Hi There")
+#        self.append_text(wx.RED, b"Hi There")
 
     def OnChar(self, evt):
         m = evt.GetModifiers()
@@ -254,13 +469,14 @@ class MTTextCtrl(wx.TextCtrl):
 
         ba = bytearray()
         ba.append(ord(c))
-        self.par.par.kl.recv(ba)
+        self.par.par.kl.recv(ba, 'wx.Key')
 
     def append_text(self, tcol, txt):
         if self.tcol != tcol:
             self.SetDefaultStyle(wx.TextAttr(colText = tcol))
             self.tcol = tcol
         self.AppendText(txt.decode('utf-8', 'ignore'))
+
 
 class MTFrame(wx.Frame):
     def __init__(self, par):
@@ -290,6 +506,7 @@ class MTFrame(wx.Frame):
     def append_text(self, tcol, txt):
         self.tc.append_text(tcol, txt)
 
+
 class MultiTerm(wx.App):
     def __init__(self, *args, **kwds):
         wx.App.__init__(self, *args, **kwds)
@@ -307,7 +524,7 @@ class MultiTerm(wx.App):
 
     def OnSerial(self, evt):
         print("serial event")
-        evt.ch.recv(evt.ba)
+        evt.ch.recv(evt.ba, evt.uid)
 
     def register_keylistener(self, kl):
         self.kl = kl
@@ -317,6 +534,7 @@ class MultiTerm(wx.App):
 
     def quit(self):
         self.f.OnClose(None)
+
 
 if __name__ == '__main__':
     s = Settings()

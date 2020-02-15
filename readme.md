@@ -8,12 +8,11 @@ A terminal program that handles several serial lines (in parallel)
 ## Open
 - python config file
 - input char handling / key handling / getting shift etc. correct in wx
-- node: xfer protocol
 - do not handle all ch the same in a node
 - node: a second path apart from ch
 - use a python settings module for GUI position etc.
 - node: byte seq: check that byte sequences are unique and don't contain each other
-- node: byte seq: make last char an asterisk / a parameter / a region
+- node: wx.Button / wx.DropDown / others?
 
 ## Done:
 - implement as package
@@ -22,6 +21,13 @@ A terminal program that handles several serial lines (in parallel)
 - node: colored output
 - node: log to file
 - node: line buffering
+- node: xfer protocol
+- node: xfer out
+- node: xfer in
+- node: byte seq: make last char an asterisk / a parameter / a region
+- node: hexdump output
+- node: add caller id
+- node: select / switch
 
 ## Layout
 - menu bar

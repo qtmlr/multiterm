@@ -6,17 +6,42 @@
 import multiterm as mt
 import serial
 import wx
+import sys
 
 
 
-def func1(app, dta):
-    print("FUNC1")
+def func1(app, dta, got):
+    print("FUNC1", got)
 
-def func2(app, dta):
-    print("FUNC2")
+def func2(app, dta, got):
+    print("FUNC2", got)
+#    c = chr(got[0])
+#    print("char", c)
+    c = got
+    if c == b'b':
+        sel.enable('hdumper')
+    elif c == b'c':
+        sel.disable('hdumper')
+    elif c == b'd':
+        sel.enable('seqcheck')
+    elif c == b'e':
+        sel.disable('seqcheck')
 
-def quitter(app, dta):
+def quitter(app, dta, got):
     app.quit()
+
+class NodeTest(mt.Node):
+    def __init__(self, nm, uid = ''):
+        mt.Node.__init__(self, uid)
+        self.nm = nm
+
+    def recv(self, ba, caller):
+        self.ba = ba[:]
+        bh = mt.hdump(ba)
+        print("NAME:", self.nm)
+        print(bh.decode('utf-8'))
+        print("---------------")
+
 
 # timeout = 0 is important, else the call to read() blocks
 s0 = serial.Serial('/dev/tnt0', 9600, bytesize=8, parity='N', stopbits=1, timeout=0, xonxoff=0, rtscts=0)
@@ -26,9 +51,10 @@ app = mt.MultiTerm()
 
 sc = mt.NodeSeqCheck( app, [
         mt.ByteSeq(quitter, b"\x1b\x1b", 0, False),
-        mt.ByteSeq(func1, b"\x1ba", 0, False),
-        mt.ByteSeq(func2, b"b", 0, True),
-    ]
+        mt.ByteSeq(func1, b"\x1bb", 0, True),
+        mt.ByteSeq(func2, b"\x1ba_", 0, False),
+    ],
+    'seqcheck'
 )
 
 lb = mt.NodeLinebuffer()
@@ -41,8 +67,12 @@ t0 = mt.NodeText(app, wx.RED)
 t1 = mt.NodeText(app, wx.BLUE)
 
 log = mt.NodeLogfile(app, "log.txt")
+hd = mt.NodeHex('hdumper')
 
-if False:
+sel = mt.NodeSelect()
+
+
+def do_a():
     key.append_receiver(ss0)
     ss0.append_receiver(t0)
     ss1.append_receiver(t1)
@@ -51,14 +81,48 @@ if False:
     app.register_proc(ss0)
     app.register_proc(ss1)
 
-
-elif False:
+def do_b():
     key.append_receiver(sc)
     sc.append_receiver(t0)
 
-elif True:
+def do_c():
     key.append_receiver(lb)
     lb.append_receiver(t1)
 
+def  do_d():
+    key.append_receiver()
 
+def do_e():
+    key.append_receiver(sc)
+    sc.append_receiver(hd)
+    hd.append_receiver(t0)
+
+def do_f():
+    key.append_receiver(sc)
+    sc.append_receiver(hd)
+    hd.append_receiver(sel)
+    sc.append_receiver(sel)
+    sel.append_receiver(t0)
+
+def do_g():
+    ntp = NodeTest('PACKET')
+    ntb = NodeTest('BYTES')
+    xo = mt.NodeXferOut()
+    xo.append_receiver(ntb)
+    ba = bytearray()
+    ba.extend( (1, 2, 3) )
+    xo.recv(ba, 'test')
+    packet = ntb.ba[:]
+    packet.insert(0, 0x66)
+    packet.insert(0, 0x65)
+    packet.insert(0, 0x64)
+    packet.extend( (0x61, 0x62, 0x63) )
+
+    xi = mt.NodeXferIn()
+    xi.append_receiver(ntb)
+    xi.add_packet_receiver(ntp)
+    xi.recv(packet, 'test')
+
+
+do_f()
 app.MainLoop()
