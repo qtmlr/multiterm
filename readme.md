@@ -1,18 +1,17 @@
 # Multi Term
-A terminal program that handles several serial lines (in parallel)
+Multi Term is a python3 library that helps you write your own terminal program.
 
 ## Features
-- Handles several serial lines
-- Extensible by a node system
+- It handles several serial lines
+- It is extensible by a node system
 
 ## Open
+- get the classes from app, not from mt, no need to give app as parameter then
 - python config file
 - input char handling / key handling / getting shift etc. correct in wx
-- do not handle all ch the same in a node
-- node: a second path apart from ch
 - use a python settings module for GUI position etc.
 - node: byte seq: check that byte sequences are unique and don't contain each other
-- node: wx.Button / wx.DropDown / others?
+- node: wx.Button / wx.DropDown / wx.Statusbar / others?
 
 ## Done:
 - implement as package
@@ -28,6 +27,8 @@ A terminal program that handles several serial lines (in parallel)
 - node: hexdump output
 - node: add caller id
 - node: select / switch
+- do not handle all ch the same in a node
+- node: a second path apart from ch
 
 ## Layout
 - menu bar

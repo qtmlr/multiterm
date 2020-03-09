@@ -48,6 +48,8 @@ s0 = serial.Serial('/dev/tnt0', 9600, bytesize=8, parity='N', stopbits=1, timeou
 s1 = serial.Serial('/dev/tnt1', 9600, bytesize=8, parity='N', stopbits=1, timeout=0, xonxoff=0, rtscts=0)
 
 app = mt.MultiTerm()
+#sbar = app.StatusBar()
+
 
 sc = mt.NodeSeqCheck( app, [
         mt.ByteSeq(quitter, b"\x1b\x1b", 0, False),
@@ -66,7 +68,7 @@ ss1 = mt.NodeSerial(app, s1)
 t0 = mt.NodeText(app, wx.RED)
 t1 = mt.NodeText(app, wx.BLUE)
 
-log = mt.NodeLogfile(app, "log.txt")
+log = mt.NodeLogfile("log.txt")
 hd = mt.NodeHex('hdumper')
 
 sel = mt.NodeSelect()

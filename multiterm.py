@@ -106,14 +106,32 @@ class ByteSeq(object):
         return self.match
 
 
+# The Node, this is the base class
 class Node(object):
+    """This is the base class for all other nodes.  It is meant to be derived and not to be used directly.
+    """
     def __init__(self, uid = ''):
-        self.ch = []
+        self.ch = dict()
+        self.ch['_'] = []
         self.uid = uid
         self.ba = bytearray()
 
-    def append_receiver(self, ch):
-        self.ch.append(ch)
+    def append_receiver(self, *ch):
+        """This function can be used to register receivers (other Nodes) to this Node.
+        Anything this Node wants to output goes to its receivers.
+        Receivers can register with a key ('_' if no key is given).
+        This class can use the receivers under the different keys for different purposes.
+        """
+        if len(ch) >= 2 and isinstance(ch[0], str):
+            k = ch[0]
+            a = ch[1:]
+        else:
+            k = '_'
+            a = ch
+        if not k in self.ch:
+            self.ch[k] = []
+
+        self.ch[k].extend(a)
 
     def recv(self, ba, caller):
         pass
@@ -123,6 +141,8 @@ class Node(object):
 
 
 class NodeSelect(Node):
+    """
+    """
     def __init__(self, uid = ''):
         Node.__init__(self, uid)
         self.d = dict()
@@ -140,7 +160,7 @@ class NodeSelect(Node):
         self.d[k] = False
 
     def recv(self, ba, caller):
-        for ch in self.ch:
+        for ch in self.ch['_']:
             df = self.df
             if caller in self.d:
                 df = self.d[caller]
@@ -149,6 +169,8 @@ class NodeSelect(Node):
 
 
 class NodeHex(Node):
+    """A Node that converts its input to hexadecimal numbers and outputs these to its receivers.
+    """
     def __init__(self, uid = ''):
         Node.__init__(self, uid)
 
@@ -160,11 +182,13 @@ class NodeHex(Node):
             l = x & 15
             b.append(htab[h])
             b.append(htab[l])
-        for ch in self.ch:
+        for ch in self.ch['_']:
             ch.recv(b, self.uid)
 
 
 class NodeXferOut(Node):
+    """Convert an input bytearray to a XFER packet
+    """
     def __init__(self, uid = ''):
         Node.__init__(self, uid)
 
@@ -185,11 +209,16 @@ class NodeXferOut(Node):
         s &= 255
         list_add(b, s)
 
-        for ch in self.ch:
+        for ch in self.ch['_']:
             ch.recv(b, self.uid)
 
 
 class NodeXferIn(Node):
+    """Scan the input bytearrays to an XFER packet.  The packet will be handled differently
+    from the other data.
+    TODO: What happens if a packet is not recognized?
+    TODO: Are the other data just forwarded to the children?
+    """
     def __init__(self, uid = ''):
         Node.__init__(self, uid)
         self.reset()
@@ -264,7 +293,7 @@ class NodeXferIn(Node):
         elif self.st == 5:
             if v == self.s:
                 if len(self.ba) != 0:
-                    for ch in self.ch:
+                    for ch in self.ch['_']:
                         ch.recv(self.ba, self.uid)
                     self.ba = bytearray()
 
@@ -282,12 +311,14 @@ class NodeXferIn(Node):
         for x in ba:
             self.rx(x)
         if len(self.ba) != 0:
-            for ch in self.ch:
+            for ch in self.ch['_']:
                 ch.recv(self.ba, self.uid)
             self.ba = bytearray()
 
 
 class NodeLinebuffer(Node):
+    """Buffer input data until a \n is detected, then output them all at once.
+    """
     def __init__(self, uid = ''):
         Node.__init__(self, uid)
         self.ba = bytearray()
@@ -298,11 +329,14 @@ class NodeLinebuffer(Node):
         if not ix is None:
             f = self.ba[:ix + 1]
             self.ba = self.ba[ix+1:]
-            for ch in self.ch:
+            for ch in self.ch['_']:
                 ch.recv(f, self.uid)
 
 
 class NodeSeqCheck(Node):
+    """Check the input streams against a list of byte sequences (lobs).
+    If a sequence is detected then call the registered callout.
+    """
     def __init__(self, app, lobs, uid = ''):
         Node.__init__(self, uid)
         self.app = app
@@ -325,14 +359,15 @@ class NodeSeqCheck(Node):
             if display:
                 bba = bytearray()
                 bba.append(b)
-                for ch in self.ch:
+                for ch in self.ch['_']:
                     ch.recv(bba, self.uid)
 
 
 class NodeLogfile(Node):
-    def __init__(self, app, fname, uid = ''):
+    """Write all incoming data into a log file.
+    """
+    def __init__(self, fname, uid = ''):
         Node.__init__(self, uid)
-        self.app = app
         self.fname = fname
         self.fd = open(self.fname, "wb")
 
@@ -341,6 +376,9 @@ class NodeLogfile(Node):
 
 
 class NodeKeyboard(Node):
+    """Send the keyboard input data to the registered receivers.
+    It seems problematic to get the real characters, e.g. Shift-+ does not give *.
+    """
     def __init__(self, app, uid = ''):
         Node.__init__(self, uid)
         self.app = app
@@ -349,11 +387,13 @@ class NodeKeyboard(Node):
     def recv(self, ba, caller = ''):
         if len(ba) != 0:
 #            print("kbd recv", ba)
-            for ch in self.ch:
+            for ch in self.ch['_']:
                 ch.recv(ba, self.uid)
 
 
 class NodeSerial(Node):
+    """The input and output from a serial line is handled by this Node.
+    """
     def __init__(self, app, ser, uid = ''):
         Node.__init__(self, uid)
         self.app = app
@@ -365,12 +405,15 @@ class NodeSerial(Node):
     def proc(self):
         ba = self.ser.read()
         if len(ba) != 0:
-            for ch in self.ch:
+            for ch in self.ch['_']:
                 evt = SerialEvent(ba = ba, ch = ch, uid = self.uid)
                 wx.PostEvent(self.app, evt)
 
 
 class NodeText(Node):
+    """Instances of these Nodes get a color parameter.  The input is colored by that color
+    and displayed in the wx.TextCtrl.
+    """
     def __init__(self, app, col, uid = ''):
         Node.__init__(self, uid)
         self.app = app
@@ -404,6 +447,8 @@ def configfile():
 
 
 class Settings(dict):
+    """Save / Load settings data, also handle default data for them.
+    """
     def __init__(self):
         super(Settings, self).__init__(self)
         self.__dict__ = self
