@@ -26,6 +26,8 @@
 - node: seqCheck, range for last character
 - get the classes from app, not from mt, no need to give app as parameter then
 - node: wx.Button / wx.DropDown / wx.Statusbar / others?
+- variable renaming to better speaking names
+- verify the examples in readme.md
 
 ## Layout
 - menu bar

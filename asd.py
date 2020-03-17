@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#! /usr/bin/python3
 
 """
 """
@@ -10,22 +10,21 @@ import sys
 
 
 
-def func1(app, dta, got):
-    print("FUNC1", got)
+def func1(app, dta, last_byte):
+    print("FUNC1", last_byte)
 
-def func2(app, dta, got):
-    print("FUNC2", got)
-    c = got
-    if c == b'b':
+def func2(app, dta, last_byte):
+    print("FUNC2", last_byte)
+    if last_byte == b'b':
         sel.enable('hdumper')
-    elif c == b'c':
+    elif last_byte == b'c':
         sel.disable('hdumper')
-    elif c == b'd':
+    elif last_byte == b'd':
         sel.enable('seqcheck')
-    elif c == b'e':
+    elif last_byte == b'e':
         sel.disable('seqcheck')
 
-def quitter(app, dta, got):
+def quitter(app, dta, last_byte):
     app.quit()
 
 def func3(evt):

@@ -24,10 +24,11 @@ ESC = 255
 htab = (0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
 
 
+# print a byte string
 def printb(txt):
     print(txt.decode('utf-8', 'ignore'))
 
-
+# return a hex dump of a byte array as another byte array
 def hdump(ba, bpl = 8):
     ret = bytearray()
     for ix, x in enumerate(ba):
@@ -43,20 +44,22 @@ def hdump(ba, bpl = 8):
     return ret
 
 
-def rindex(lst, val, start = None):
+def rfind(lst, val, start = None):
     if start is None:
         start = len(lst) - 1
     for i in range(start, -1, -1):
         if lst[i] == val:
             return i
+    return -1
 
 
-def lindex(lst, val, start = None):
+def lfind(lst, val, start = None):
     if start is None:
         start = 0
     for i in range(start, len(lst), 1):
         if lst[i] == val:
             return i
+    return -1
 
 
 def list_add(l, v):
@@ -82,11 +85,17 @@ class ProcHandler(threading.Thread):
                 ob.proc()
 
 
+# a ByteSeq describes a certain sequence of bytes.  If the same sequence is input into this ByteSeq
+# then it will "match", else the ByteSeq's counter will be reset and the input is scanned again.
+# ByteSeqs are checked from within a NodeSeqcheck, if there is a match then it will call the call target
+# with certain parameters (the app, the given dta parameter and the last byte that was input into this ByteSeq).
 class ByteSeq(object):
-    def __init__(self, cll, bstr, dta = None, display = False):
+    def __init__(self, cll, bstr, dta = None, forward = False):
         self.call = cll # call target
         self.dta = dta # parameter to call
-        self.display = display # if characters shall be forwarded to children if this seq is still possible
+        self.forward = forward # if characters shall be forwarded to children if this seq is still possible
+
+        # check if the last byte of the sequence is rather a list than a single byte
         if bstr[-1] == ord(b']'):
             ix = bstr.rfind(b'[')
             if ix < 0:
@@ -110,6 +119,7 @@ class ByteSeq(object):
             self.ln = len(bstr)
         self.reset()
 
+    # return True if byte b matches this ByteSeq at index ix
     def mtch(self, b, ix):
         assert ix < self.ln
         if not self.last is None:
@@ -126,14 +136,14 @@ class ByteSeq(object):
     def reset(self):
         self.ix = 0
         self.match = False
-        self.got = bytearray()
+        self.last_byte = bytearray()
 
     def received(self, b):
         if self.ix < self.ln:
             if self.mtch(b, self.ix):
                 self.ix += 1
                 if self.ix == self.ln:
-                    self.got.append(b)
+                    self.last_byte.append(b)
                     self.match = True
             else:
                 self.reset()
@@ -144,10 +154,21 @@ class ByteSeq(object):
         return self.match
 
 
-# The Node, this is the base class
+# The Node, this is the base class for all other Nodes
 class Node(object):
     """This is the base class for all other nodes.  It is meant to be derived and not to be used directly.
-    """
+
+A Node should know the MultiTerm app that it is used in and optionally can have a UID, a user chosen name
+that can be used to identify this node.
+
+A Node can receive input data using the method recv(ba, caller_uid).  "ba" is a bytearray containing
+0 or more bytes that this node shall process.
+
+Other Nodes can be set as receivers of this node by calling Node.append_receiver().  This method can optionally
+take an identifier that is handled depending on the nodes behavior.  Most often, this parameter is omitted.
+Processed data of a node will then behanded to the registered receiver nodes by calling their method recv(ba, caller_uid).
+The parameter "caller_uid" will be the UID given to the calling node in its constructor.
+"""
     def __init__(self, app, uid = ''):
         self.ch = dict()
         self.ch['_'] = []
@@ -157,10 +178,10 @@ class Node(object):
 
     def append_receiver(self, *ch):
         """This function can be used to register receivers (other Nodes) to this Node.
-        Anything this Node wants to output goes to its receivers.
-        Receivers can register with a key ('_' if no key is given).
-        This class can use the receivers under the different keys for different purposes.
-        """
+Anything this Node wants to output goes to its receivers.
+Receivers can register with a key (as first parameter, '_' if no key is given).
+This class can use the receivers for different purposes.
+"""
         if len(ch) >= 2 and isinstance(ch[0], str):
             k = ch[0]
             a = ch[1:]
@@ -173,9 +194,13 @@ class Node(object):
         self.ch[k].extend(a)
 
     def recv(self, ba, caller):
+        """To be implemented in the derived class
+        """
         pass
 
     def proc(self):
+        """To be implemented in the derived class
+        """
         pass
 
 
@@ -191,11 +216,9 @@ class NodeSelect(Node):
         self.df = df
 
     def enable(self, k):
-        print("enable", k)
         self.d[k] = True
 
     def disable(self, k):
-        print("disable", k)
         self.d[k] = False
 
     def recv(self, ba, caller):
@@ -364,8 +387,8 @@ class NodeLinebuffer(Node):
 
     def recv(self, ba, caller):
         self.ba.extend(ba)
-        ix = rindex(self.ba, 13)
-        if not ix is None:
+        ix = rfind(self.ba, 13)
+        if ix >= 0:
             f = self.ba[:ix + 1]
             self.ba = self.ba[ix+1:]
             for ch in self.ch['_']:
@@ -383,16 +406,16 @@ class NodeSeqCheck(Node):
 
     def recv(self, ba, caller):
         for b in ba:
-            display = True
+            forward = True
             for bs in self.lobs:
                 bs.received(b)
-                if bs.ix != 0 and bs.display == False:
-                    display = False
+                if bs.ix != 0 and bs.forward == False:
+                    forward = False
                 if bs.matched():
-                    bs.call(self.app, bs.dta, bs.got)
+                    bs.call(self.app, bs.dta, bs.last_byte)
                     bs.reset()
 
-            if display:
+            if forward:
                 bba = bytearray()
                 bba.append(b)
                 for ch in self.ch['_']:
@@ -411,6 +434,16 @@ class NodeLogfile(Node):
         self.fd.write(ba)
 
 
+def singleton(class_):
+    instances = {}
+    def getinstance(*args, **kwargs):
+        if class_ not in instances:
+            instances[class_] = class_(*args, **kwargs)
+        return instances[class_]
+    return getinstance
+
+
+@singleton
 class NodeKeyboard(Node):
     """Send the keyboard input data to the registered receivers.
     It seems problematic to get the real characters, e.g. Shift-+ does not give *.
@@ -549,7 +582,8 @@ class MTTextCtrl(wx.TextCtrl):
 
         ba = bytearray()
         ba.append(ord(c))
-        self.par.par.kl.recv(ba, 'wx.Key')
+        if self.par.par.kl:
+            self.par.par.kl.recv(ba, 'wx.Key')
 
     def append_text(self, tcol, txt):
         if self.tcol != tcol:
