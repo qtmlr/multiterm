@@ -23,6 +23,11 @@ ESC = 255
 
 htab = (0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
 
+
+def printb(txt):
+    print(txt.decode('utf-8', 'ignore'))
+
+
 def hdump(ba, bpl = 8):
     ret = bytearray()
     for ix, x in enumerate(ba):
@@ -62,6 +67,9 @@ def list_add(l, v):
         l.append(v)
 
 
+class MTException(Exception):
+    pass
+
 class ProcHandler(threading.Thread):
     def __init__(self, app):
         threading.Thread.__init__(self)
@@ -79,8 +87,41 @@ class ByteSeq(object):
         self.call = cll # call target
         self.dta = dta # parameter to call
         self.display = display # if characters shall be forwarded to children if this seq is still possible
-        self.bstr = bstr # the sequence to match
+        if bstr[-1] == ord(b']'):
+            ix = bstr.rfind(b'[')
+            if ix < 0:
+                raise MTException(b"ByteSeq '%s': did not find matching '['" % (bstr))
+            self.bstr = bstr[:ix]
+            s = bstr[ix+1:-1]
+            ss = s.split(b",")
+            self.last = []
+            for sss in ss:
+                if len(sss) == 3 and sss[1] == ord(b'-'):
+                    self.last.append( (sss[0], sss[2]) )
+                elif len(sss) == 1:
+                    self.last.append( (sss[0], sss[0]) )
+                else:
+                   raise MTException(b"ByteSeq '%s': did not understand '%s'" % (bstr, sss))
+                q = self.last[-1]
+            self.ln = len(self.bstr) + 1
+        else:
+            self.bstr = bstr # the sequence to match
+            self.last = None
+            self.ln = len(bstr)
         self.reset()
+
+    def mtch(self, b, ix):
+        assert ix < self.ln
+        if not self.last is None:
+            if ix < self.ln-1:
+                return b == self.bstr[ix]
+            else:
+                for rg in self.last:
+                    if rg[0] <= b and b <= rg[1]:
+                        return True
+                return False
+        else:
+            return b == self.bstr[ix]
 
     def reset(self):
         self.ix = 0
@@ -88,14 +129,11 @@ class ByteSeq(object):
         self.got = bytearray()
 
     def received(self, b):
-        if self.ix < len(self.bstr):
-            bc = self.bstr[self.ix]
-            wcard = bc == ord('_')
-            if b == bc or wcard:
-                if wcard:
-                    self.got.append(b)
+        if self.ix < self.ln:
+            if self.mtch(b, self.ix):
                 self.ix += 1
-                if self.ix == len(self.bstr):
+                if self.ix == self.ln:
+                    self.got.append(b)
                     self.match = True
             else:
                 self.reset()
@@ -110,10 +148,11 @@ class ByteSeq(object):
 class Node(object):
     """This is the base class for all other nodes.  It is meant to be derived and not to be used directly.
     """
-    def __init__(self, uid = ''):
+    def __init__(self, app, uid = ''):
         self.ch = dict()
         self.ch['_'] = []
         self.uid = uid
+        self.app = app
         self.ba = bytearray()
 
     def append_receiver(self, *ch):
@@ -143,8 +182,8 @@ class Node(object):
 class NodeSelect(Node):
     """
     """
-    def __init__(self, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, app, uid)
         self.d = dict()
         self.df = True
 
@@ -171,8 +210,8 @@ class NodeSelect(Node):
 class NodeHex(Node):
     """A Node that converts its input to hexadecimal numbers and outputs these to its receivers.
     """
-    def __init__(self, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, app, uid)
 
     def recv(self, ba, caller):
         b = bytearray()
@@ -189,8 +228,8 @@ class NodeHex(Node):
 class NodeXferOut(Node):
     """Convert an input bytearray to a XFER packet
     """
-    def __init__(self, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, app, uid)
 
     def recv(self, ba, caller):
         b = bytearray()
@@ -219,8 +258,8 @@ class NodeXferIn(Node):
     TODO: What happens if a packet is not recognized?
     TODO: Are the other data just forwarded to the children?
     """
-    def __init__(self, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, app, uid)
         self.reset()
         self.pch = []
 
@@ -319,8 +358,8 @@ class NodeXferIn(Node):
 class NodeLinebuffer(Node):
     """Buffer input data until a \n is detected, then output them all at once.
     """
-    def __init__(self, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, uid = ''):
+        Node.__init__(self, app, uid)
         self.ba = bytearray()
 
     def recv(self, ba, caller):
@@ -338,15 +377,12 @@ class NodeSeqCheck(Node):
     If a sequence is detected then call the registered callout.
     """
     def __init__(self, app, lobs, uid = ''):
-        Node.__init__(self, uid)
-        self.app = app
+        Node.__init__(self, app, uid)
         self.esc = 27
         self.lobs = lobs # list of byte sequences
 
     def recv(self, ba, caller):
         for b in ba:
-            print("Check", b)
-
             display = True
             for bs in self.lobs:
                 bs.received(b)
@@ -354,7 +390,7 @@ class NodeSeqCheck(Node):
                     display = False
                 if bs.matched():
                     bs.call(self.app, bs.dta, bs.got)
-                    bs.reset() # reset all?
+                    bs.reset()
 
             if display:
                 bba = bytearray()
@@ -366,8 +402,8 @@ class NodeSeqCheck(Node):
 class NodeLogfile(Node):
     """Write all incoming data into a log file.
     """
-    def __init__(self, fname, uid = ''):
-        Node.__init__(self, uid)
+    def __init__(self, app, fname, uid = ''):
+        Node.__init__(self, app, uid)
         self.fname = fname
         self.fd = open(self.fname, "wb")
 
@@ -380,13 +416,12 @@ class NodeKeyboard(Node):
     It seems problematic to get the real characters, e.g. Shift-+ does not give *.
     """
     def __init__(self, app, uid = ''):
-        Node.__init__(self, uid)
+        Node.__init__(self, app, uid)
         self.app = app
         app.register_keylistener(self)
 
     def recv(self, ba, caller = ''):
         if len(ba) != 0:
-#            print("kbd recv", ba)
             for ch in self.ch['_']:
                 ch.recv(ba, self.uid)
 
@@ -395,7 +430,7 @@ class NodeSerial(Node):
     """The input and output from a serial line is handled by this Node.
     """
     def __init__(self, app, ser, uid = ''):
-        Node.__init__(self, uid)
+        Node.__init__(self, app, uid)
         self.app = app
         self.ser = ser
 
@@ -415,7 +450,7 @@ class NodeText(Node):
     and displayed in the wx.TextCtrl.
     """
     def __init__(self, app, col, uid = ''):
-        Node.__init__(self, uid)
+        Node.__init__(self, app, uid)
         self.app = app
         self.col = col
 
@@ -527,16 +562,24 @@ class MTFrame(wx.Frame):
     def __init__(self, par):
         wx.Frame.__init__(self, None)
         self.par = par
-        self.tc = MTTextCtrl(self)
+
         self.vbox = wx.BoxSizer(wx.VERTICAL)
+
+        self.panel = wx.Panel(self)
+#        self.panel.SetBackgroundColour(wx.RED)
+        self.vbox.Add(self.panel, proportion = 0, flag = wx.EXPAND | wx.ALL, border = 0)
+
+        self.tc = MTTextCtrl(self)
         self.vbox.Add(self.tc, proportion = 1, flag = wx.EXPAND | wx.ALL, border = 0)
+
+        self.hbox = wx.BoxSizer(wx.HORIZONTAL)
+        self.panel.SetSizer(self.hbox)
 
         self.SetSizer(self.vbox)
         self.Show(True)
 
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
-        print("starting threads")
         self.par.thr.start()
 
     def OnClose(self, evt):
@@ -544,7 +587,6 @@ class MTFrame(wx.Frame):
         self.Destroy()
 
     def stop_thread(self):
-        print("stopping thread")
         self.par.thr.stop = True
         self.par.thr.join()
 
@@ -568,7 +610,6 @@ class MultiTerm(wx.App):
         self.Bind(EVT_SERIAL_EVENT, self.OnSerial)
 
     def OnSerial(self, evt):
-        print("serial event")
         evt.ch.recv(evt.ba, evt.uid)
 
     def register_keylistener(self, kl):
@@ -579,6 +620,67 @@ class MultiTerm(wx.App):
 
     def quit(self):
         self.f.OnClose(None)
+
+    def addButton(self, txt, cback):
+        btn = wx.Button(self.f.panel, -1, txt)
+        self.f.hbox.Add(btn)
+        self.f.hbox.Layout()
+        self.f.Fit()
+        btn.Bind(wx.EVT_BUTTON, cback)
+
+    def addChoice(self, lst, cback):
+        chc = wx.Choice(self.f.panel, -1, choices = lst)
+        self.f.hbox.Add(chc)
+        self.f.hbox.Layout()
+        self.f.Fit()
+        chc.Bind(wx.EVT_CHOICE, cback)
+
+    def addStatusBar(self):
+        sbar = self.f.CreateStatusBar()
+        return sbar
+
+    # Node returning methods
+    def nodeSelect(self, uid = ''):
+        ret = NodeSelect(self, uid)
+        return ret
+
+    def nodeHex(self, uid = ''):
+        ret = NodeHex(self, uid)
+        return ret
+
+    def nodeXferOut(self, uid = ''):
+        ret = NodeXferOut(self, uid)
+        return ret
+
+    def nodeXferIn(self, uid = ''):
+        ret = NodeXferIn(self, uid)
+        return ret
+
+    def nodeLinebuffer(self, uid = ''):
+        ret = NodeLinebuffer(self, uid)
+        return ret
+
+    def nodeSeqCheck(self, lobs, uid = ''):
+        ret = NodeSeqCheck(self, lobs, uid)
+        return ret
+
+    def nodeLogfile(self, fname, uid = ''):
+        ret = NodeLogfile(self, fname, uid)
+        return ret
+
+    def nodeKeyboard(self, uid = ''):
+        ret = NodeKeyboard(self, uid)
+        return ret
+
+    def nodeSerial(self, ser, uid = ''):
+        ret = NodeSerial(self, ser, uid)
+        self.register_proc(ret)
+        return ret
+
+    def nodeText(self, col, uid = ''):
+        ret = NodeText(self, col, uid)
+        return ret
+
 
 
 if __name__ == '__main__':

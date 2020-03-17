@@ -15,8 +15,6 @@ def func1(app, dta, got):
 
 def func2(app, dta, got):
     print("FUNC2", got)
-#    c = chr(got[0])
-#    print("char", c)
     c = got
     if c == b'b':
         sel.enable('hdumper')
@@ -30,9 +28,16 @@ def func2(app, dta, got):
 def quitter(app, dta, got):
     app.quit()
 
+def func3(evt):
+    print("CLICKED " + str(evt))
+
+def func4(evt):
+    print("CHOICE " + evt.GetString())
+
+
 class NodeTest(mt.Node):
-    def __init__(self, nm, uid = ''):
-        mt.Node.__init__(self, uid)
+    def __init__(self, app, nm, uid = ''):
+        mt.Node.__init__(self, app, uid)
         self.nm = nm
 
     def recv(self, ba, caller):
@@ -48,30 +53,33 @@ s0 = serial.Serial('/dev/tnt0', 9600, bytesize=8, parity='N', stopbits=1, timeou
 s1 = serial.Serial('/dev/tnt1', 9600, bytesize=8, parity='N', stopbits=1, timeout=0, xonxoff=0, rtscts=0)
 
 app = mt.MultiTerm()
-#sbar = app.StatusBar()
+sbar = app.addStatusBar()
+sbar.SetStatusText("Hi there")
+app.addButton("QWE", func3)
+app.addChoice(['9600', '19200', '38400'], func4)
 
-
-sc = mt.NodeSeqCheck( app, [
+sc = app.nodeSeqCheck( [
         mt.ByteSeq(quitter, b"\x1b\x1b", 0, False),
-        mt.ByteSeq(func1, b"\x1bb", 0, True),
-        mt.ByteSeq(func2, b"\x1ba_", 0, False),
+        mt.ByteSeq(func1, b"\x1bb[x-z]", 0, True),
+        mt.ByteSeq(func2, b"\x1baz", 0, False),
+        mt.ByteSeq(func2, b"\x1ba[a-c,e,g-i]", 0, False),
     ],
     'seqcheck'
 )
 
-lb = mt.NodeLinebuffer()
+lb = app.nodeLinebuffer()
 
-key = mt.NodeKeyboard(app)
+key = app.nodeKeyboard()
 
-ss0 = mt.NodeSerial(app, s0)
-ss1 = mt.NodeSerial(app, s1)
-t0 = mt.NodeText(app, wx.RED)
-t1 = mt.NodeText(app, wx.BLUE)
+ss0 = app.nodeSerial(s0)
+ss1 = app.nodeSerial(s1)
+t0 = app.nodeText(wx.RED)
+t1 = app.nodeText(wx.BLUE)
 
-log = mt.NodeLogfile("log.txt")
-hd = mt.NodeHex('hdumper')
+log = app.nodeLogfile("log.txt")
+hd = app.nodeHex('hdumper')
 
-sel = mt.NodeSelect()
+sel = app.nodeSelect()
 
 
 def do_a():
@@ -80,8 +88,8 @@ def do_a():
     ss1.append_receiver(t1)
     ss1.append_receiver(log)
 
-    app.register_proc(ss0)
-    app.register_proc(ss1)
+#    app.register_proc(ss0)
+#    app.register_proc(ss1)
 
 def do_b():
     key.append_receiver(sc)
@@ -107,9 +115,9 @@ def do_f():
     sel.append_receiver(t0)
 
 def do_g():
-    ntp = NodeTest('PACKET')
-    ntb = NodeTest('BYTES')
-    xo = mt.NodeXferOut()
+    ntp = NodeTest(app, 'PACKET')
+    ntb = NodeTest(app, 'BYTES')
+    xo = mt.NodeXferOut(app)
     xo.append_receiver(ntb)
     ba = bytearray()
     ba.extend( (1, 2, 3) )
@@ -120,11 +128,11 @@ def do_g():
     packet.insert(0, 0x64)
     packet.extend( (0x61, 0x62, 0x63) )
 
-    xi = mt.NodeXferIn()
+    xi = mt.NodeXferIn(app)
     xi.append_receiver(ntb)
     xi.add_packet_receiver(ntp)
     xi.recv(packet, 'test')
 
 
-do_f()
+do_a()
 app.MainLoop()
