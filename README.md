@@ -36,7 +36,7 @@ app = mt.MultiTerm()
 key = app.nodeKeyboard('my_key')
 nothing = NodeNothing(app)
 t0 = app.nodeText(wx.RED, 'red_text')
-t1 = app.nodeText(wx.Blue, 'blue_text')
+t1 = app.nodeText(wx.BLUE, 'blue_text')
 key.append_receiver(nothing)
 nothing.append_receiver(t0, t1) # append_receiver can take more than one parameter
 ```
@@ -208,5 +208,9 @@ def func3(evt):
 def func4(evt):
     print("CHOICE " + evt.GetString())
 
+sbar = app.addStatusBar()
+sbar.SetStatusText("Hi there")
+app.addButton("My Button", func3)
+app.addChoice(['Option A', 'Option B', 'Option C'], func4)
 
 ```
